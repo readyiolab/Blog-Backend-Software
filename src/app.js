@@ -29,28 +29,35 @@ app.set('trust proxy', 1);
 app.use(helmet());
 
 // CORS configuration
+const defaultAllowedOrigins = [
+  'https://beansnews.com',
+  'https://admin.beansnews.com',
+  'https://api.beansnews.com',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+];
+const envOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...envOrigins])];
+
 const corsOptions = {
   origin: function (origin, callback) {
-    const allowedOrigins = [
-      'https://beansnews.com',
-      'https://admin.beansnews.com',
-      'https://api.beansnews.com',
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'http://localhost:5174',
-    ];
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error(`Not allowed by CORS: ${origin}`));
     }
   },
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Body parser middleware
 app.use(express.json({ limit: '10mb' }));
