@@ -5,6 +5,27 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
 
+const EXPECTED_TABLES = [
+  'tbl_roles',
+  'tbl_users',
+  'tbl_permissions',
+  'tbl_role_permissions',
+  'tbl_categories',
+  'tbl_sub_categories',
+  'tbl_articles',
+  'tbl_tags',
+  'tbl_article_tags',
+  'tbl_comments',
+  'tbl_gallery',
+  'tbl_videos',
+  'tbl_newsletter_subscribers',
+  'tbl_related_articles',
+  'tbl_sitemap_log',
+  'tbl_activity_logs',
+  'tbl_banners',
+  'tbl_article_analytics',
+];
+
 function splitSqlStatements(sql) {
   const statements = [];
   let current = '';
@@ -71,8 +92,8 @@ if (!dbName) {
   process.exit(1);
 }
 
-async function main() {
-  const connectionConfig = {
+function buildConnectionConfig() {
+  const config = {
     host: process.env.DB_HOST,
     port: Number(process.env.DB_PORT || 3306),
     user: process.env.DB_USER,
@@ -80,7 +101,27 @@ async function main() {
     waitForConnections: true,
     connectionLimit: 5,
     queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000,
+    multipleStatements: false,
   };
+
+  if (config.host && config.host.includes('rds.amazonaws.com')) {
+    const sslPath = path.resolve(__dirname, '..', 'global-bundle.pem');
+    if (fs.existsSync(sslPath)) {
+      config.ssl = {
+        rejectUnauthorized: false,
+        ca: fs.readFileSync(sslPath),
+      };
+      console.log('Using SSL for RDS connection.');
+    }
+  }
+
+  return config;
+}
+
+async function main() {
+  const connectionConfig = buildConnectionConfig();
 
   const rootConnection = await mysql.createConnection(connectionConfig);
   try {
@@ -99,12 +140,32 @@ async function main() {
 
   try {
     console.log('Running database schema migration...');
-    await runSqlFile(pool, path.join(__dirname, '..', 'database_schema.sql'));
+    const schemaFailures = await runSqlFile(pool, path.join(__dirname, '..', 'database_schema.sql'));
 
     const fixMigrationPath = path.join(__dirname, '..', 'fix_missing_tables.sql');
+    let supplementalFailures = [];
     if (fs.existsSync(fixMigrationPath)) {
       console.log('Running supplemental migration file...');
-      await runSqlFile(pool, fixMigrationPath);
+      supplementalFailures = await runSqlFile(pool, fixMigrationPath);
+    }
+
+    const allFailures = [...schemaFailures, ...supplementalFailures];
+    if (allFailures.length > 0) {
+      console.error(`\n${allFailures.length} statement(s) failed during migration:`);
+      for (const failure of allFailures) {
+        console.error(`  - ${failure.statement.slice(0, 100).replace(/\s+/g, ' ')}...`);
+        console.error(`    -> ${failure.error}`);
+      }
+    }
+
+    const { missing, present } = await verifyTables(pool);
+    console.log(`\nTable check: ${present.length}/${EXPECTED_TABLES.length} expected tables present.`);
+    if (missing.length > 0) {
+      console.error(`Missing tables: ${missing.join(', ')}`);
+    }
+
+    if (!present.includes('tbl_roles') || !present.includes('tbl_users')) {
+      throw new Error('Core tables (tbl_roles / tbl_users) are missing. Cannot seed admin. Check the errors above.');
     }
 
     await ensureDefaultRoles(pool);
@@ -130,7 +191,12 @@ async function main() {
       console.log(`Created admin user: ${adminEmail}`);
     }
 
-    console.log('Migration completed successfully.');
+    if (allFailures.length > 0 || missing.length > 0) {
+      console.error('\nMigration finished with errors — see above. Admin user was still seeded.');
+      process.exitCode = 1;
+    } else {
+      console.log('\nMigration completed successfully. All tables present.');
+    }
     console.log(`Login email: ${adminEmail}`);
     console.log('Login password: ' + adminPassword);
   } finally {
@@ -141,6 +207,7 @@ async function main() {
 async function runSqlFile(pool, filePath) {
   const sql = fs.readFileSync(filePath, 'utf8');
   const statements = splitSqlStatements(sql);
+  const failures = [];
 
   for (const statement of statements) {
     try {
@@ -156,13 +223,29 @@ async function runSqlFile(pool, filePath) {
         message.includes('duplicate entry') ||
         message.includes('table exists');
 
-      if (!isSafeToIgnore) {
-        throw error;
+      if (isSafeToIgnore) {
+        console.log(`Skipped existing object: ${statement.slice(0, 80)}...`);
+        continue;
       }
 
-      console.log(`Skipped existing object: ${statement.slice(0, 80)}...`);
+      // Don't let one bad statement stop the rest of the tables from being created.
+      console.error(`Statement failed, continuing with the rest: ${statement.slice(0, 80)}...`);
+      console.error(`  -> ${error.message}`);
+      failures.push({ statement, error: error.message });
     }
   }
+
+  return failures;
+}
+
+async function verifyTables(pool) {
+  const [rows] = await pool.query(
+    'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?',
+    [dbName]
+  );
+  const present = new Set(rows.map((row) => row.name));
+  const missing = EXPECTED_TABLES.filter((table) => !present.has(table));
+  return { missing, present: EXPECTED_TABLES.filter((table) => present.has(table)) };
 }
 
 async function ensureDefaultRoles(pool) {

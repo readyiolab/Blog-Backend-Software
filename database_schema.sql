@@ -1,5 +1,5 @@
 -- tbl_Roles Table (Admin, Editor, Reporter, Author, User)
-CREATE TABLE tbl_roles (
+CREATE TABLE IF NOT EXISTS tbl_roles (
   id INT PRIMARY KEY AUTO_INCREMENT,
   role_name VARCHAR(50) UNIQUE NOT NULL,
   description TEXT,
@@ -7,7 +7,7 @@ CREATE TABLE tbl_roles (
 );
 
 -- tbl_Users Table (with roles)
-CREATE TABLE tbl_users (
+CREATE TABLE IF NOT EXISTS tbl_users (
   id INT PRIMARY KEY AUTO_INCREMENT,
   username VARCHAR(50) UNIQUE NOT NULL,
   email VARCHAR(100) UNIQUE NOT NULL,
@@ -30,7 +30,7 @@ CREATE TABLE tbl_users (
 );
 
 -- tbl_Permissions Table
-CREATE TABLE tbl_permissions (
+CREATE TABLE IF NOT EXISTS tbl_permissions (
   id INT PRIMARY KEY AUTO_INCREMENT,
   permission_name VARCHAR(100) UNIQUE NOT NULL,
   description TEXT,
@@ -39,7 +39,7 @@ CREATE TABLE tbl_permissions (
 );
 
 -- tbl_Role-Permission Mapping
-CREATE TABLE tbl_role_permissions (
+CREATE TABLE IF NOT EXISTS tbl_role_permissions (
   id INT PRIMARY KEY AUTO_INCREMENT,
   role_id INT NOT NULL,
   permission_id INT NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE tbl_role_permissions (
 );
 
 -- tbl_Categories Table
-CREATE TABLE tbl_categories (
+CREATE TABLE IF NOT EXISTS tbl_categories (
   id INT PRIMARY KEY AUTO_INCREMENT,
   category_name VARCHAR(100) NOT NULL,
   slug VARCHAR(120) UNIQUE NOT NULL,
@@ -67,7 +67,7 @@ CREATE TABLE tbl_categories (
 );
 
 -- tbl_Sub-Categories Table
-CREATE TABLE tbl_sub_categories (
+CREATE TABLE IF NOT EXISTS tbl_sub_categories (
   id INT PRIMARY KEY AUTO_INCREMENT,
   category_id INT NOT NULL,
   subcategory_name VARCHAR(100) NOT NULL,
@@ -83,7 +83,7 @@ CREATE TABLE tbl_sub_categories (
 );
 
 -- tbl_Articles/Posts Table (SEO Friendly)
-CREATE TABLE tbl_articles (
+CREATE TABLE IF NOT EXISTS tbl_articles (
   id INT PRIMARY KEY AUTO_INCREMENT,
   title VARCHAR(200) NOT NULL,
   slug VARCHAR(250) UNIQUE NOT NULL,
@@ -132,7 +132,7 @@ CREATE TABLE tbl_articles (
 );
 
 -- tbl_Article Tags Table (for better SEO)
-CREATE TABLE tbl_tags (
+CREATE TABLE IF NOT EXISTS tbl_tags (
   id INT PRIMARY KEY AUTO_INCREMENT,
   tag_name VARCHAR(100) NOT NULL,
   slug VARCHAR(120) UNIQUE NOT NULL,
@@ -144,7 +144,7 @@ CREATE TABLE tbl_tags (
 );
 
 -- tbl_Article-Tag Mapping
-CREATE TABLE tbl_article_tags (
+CREATE TABLE IF NOT EXISTS tbl_article_tags (
   id INT PRIMARY KEY AUTO_INCREMENT,
   article_id INT NOT NULL,
   tag_id INT NOT NULL,
@@ -154,7 +154,7 @@ CREATE TABLE tbl_article_tags (
 );
 
 -- tbl_Comments Table
-CREATE TABLE tbl_comments (
+CREATE TABLE IF NOT EXISTS tbl_comments (
   id INT PRIMARY KEY AUTO_INCREMENT,
   article_id INT NOT NULL,
   user_id INT NOT NULL,
@@ -172,7 +172,7 @@ CREATE TABLE tbl_comments (
 );
 
 -- tbl_Gallery/Images Table
-CREATE TABLE tbl_gallery (
+CREATE TABLE IF NOT EXISTS tbl_gallery (
   id INT PRIMARY KEY AUTO_INCREMENT,
   article_id INT,
   image_url VARCHAR(255) NOT NULL,
@@ -185,7 +185,7 @@ CREATE TABLE tbl_gallery (
 );
 
 -- tbl_Video Table (for video articles)
-CREATE TABLE tbl_videos (
+CREATE TABLE IF NOT EXISTS tbl_videos (
   id INT PRIMARY KEY AUTO_INCREMENT,
   article_id INT,
   video_url VARCHAR(255) NOT NULL,
@@ -198,7 +198,7 @@ CREATE TABLE tbl_videos (
 );
 
 -- tbl_Newsletter Subscription
-CREATE TABLE tbl_newsletter_subscribers (
+CREATE TABLE IF NOT EXISTS tbl_newsletter_subscribers (
   id INT PRIMARY KEY AUTO_INCREMENT,
   email VARCHAR(100) UNIQUE NOT NULL,
   first_name VARCHAR(100),
@@ -213,7 +213,7 @@ CREATE TABLE tbl_newsletter_subscribers (
 );
 
 -- tbl_Related Articles (for recommendations)
-CREATE TABLE tbl_related_articles (
+CREATE TABLE IF NOT EXISTS tbl_related_articles (
   id INT PRIMARY KEY AUTO_INCREMENT,
   article_id INT NOT NULL,
   related_article_id INT NOT NULL,
@@ -225,7 +225,7 @@ CREATE TABLE tbl_related_articles (
 );
 
 -- tbl_SEO Sitemap Log
-CREATE TABLE tbl_sitemap_log (
+CREATE TABLE IF NOT EXISTS tbl_sitemap_log (
   id INT PRIMARY KEY AUTO_INCREMENT,
   article_id INT,
   last_modified DATETIME,
@@ -236,7 +236,7 @@ CREATE TABLE tbl_sitemap_log (
 );
 
 -- tbl_Activity Log (for audit trail)
-CREATE TABLE tbl_activity_logs (
+CREATE TABLE IF NOT EXISTS tbl_activity_logs (
   id INT PRIMARY KEY AUTO_INCREMENT,
   user_id INT,
   action VARCHAR(100) NOT NULL,
@@ -252,7 +252,7 @@ CREATE TABLE tbl_activity_logs (
 );
 
 -- tbl_Advertising/Banner Management
-CREATE TABLE tbl_banners (
+CREATE TABLE IF NOT EXISTS tbl_banners (
   id INT PRIMARY KEY AUTO_INCREMENT,
   banner_name VARCHAR(100) NOT NULL,
   banner_image VARCHAR(255),
@@ -269,7 +269,7 @@ CREATE TABLE tbl_banners (
 );
 
 -- tbl_Analytics/Stats
-CREATE TABLE tbl_article_analytics (
+CREATE TABLE IF NOT EXISTS tbl_article_analytics (
   id INT PRIMARY KEY AUTO_INCREMENT,
   article_id INT NOT NULL,
   views INT DEFAULT 0,
