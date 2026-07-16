@@ -5,6 +5,60 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
 
+function splitSqlStatements(sql) {
+  const statements = [];
+  let current = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+
+  for (let i = 0; i < sql.length; i += 1) {
+    const char = sql[i];
+    const next = sql[i + 1];
+
+    if (char === "'" && !inDoubleQuote) {
+      if (inSingleQuote && next === "'") {
+        current += char;
+        current += next;
+        i += 1;
+      } else {
+        inSingleQuote = !inSingleQuote;
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      if (inDoubleQuote && next === '"') {
+        current += char;
+        current += next;
+        i += 1;
+      } else {
+        inDoubleQuote = !inDoubleQuote;
+        current += char;
+      }
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && char === ';') {
+      const statement = current.trim();
+      if (statement) {
+        statements.push(statement);
+      }
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  const tail = current.trim();
+  if (tail) {
+    statements.push(tail);
+  }
+
+  return statements.filter((statement) => statement && !statement.startsWith('--'));
+}
+
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const dbName = process.env.DB_NAME;
@@ -86,10 +140,7 @@ async function main() {
 
 async function runSqlFile(pool, filePath) {
   const sql = fs.readFileSync(filePath, 'utf8');
-  const statements = sql
-    .split(/;\s*\n/)
-    .map((statement) => statement.trim())
-    .filter((statement) => statement && !statement.startsWith('--'));
+  const statements = splitSqlStatements(sql);
 
   for (const statement of statements) {
     try {
@@ -102,7 +153,8 @@ async function runSqlFile(pool, filePath) {
         message.includes('index exists') ||
         message.includes('key exists') ||
         message.includes('does not exist') ||
-        message.includes('duplicate entry');
+        message.includes('duplicate entry') ||
+        message.includes('table exists');
 
       if (!isSafeToIgnore) {
         throw error;
@@ -122,11 +174,22 @@ async function ensureDefaultRoles(pool) {
     ['User', 'Default user role'],
   ];
 
-  for (const [roleName, description] of roles) {
-    await pool.query(
-      'INSERT IGNORE INTO tbl_roles (role_name, description) VALUES (?, ?)',
-      [roleName, description]
-    );
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      for (const [roleName, description] of roles) {
+        await pool.query(
+          'INSERT IGNORE INTO tbl_roles (role_name, description) VALUES (?, ?)',
+          [roleName, description]
+        );
+      }
+      return;
+    } catch (error) {
+      if (attempt === 3 || !String(error.message).includes('doesn\'t exist')) {
+        throw error;
+      }
+      console.log(`tbl_roles not ready yet, retrying (${attempt}/3)...`);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
   }
 }
 
