@@ -26,6 +26,9 @@ const EXPECTED_TABLES = [
   'tbl_article_analytics',
 ];
 
+// Splits a .sql file into individual statements. Strips `-- ...` line
+// comments as it scans (outside quotes) so a comment sitting right before a
+// CREATE TABLE/INSERT can never swallow the statement that follows it.
 function splitSqlStatements(sql) {
   const statements = [];
   let current = '';
@@ -60,6 +63,13 @@ function splitSqlStatements(sql) {
       continue;
     }
 
+    if (!inSingleQuote && !inDoubleQuote && char === '-' && next === '-') {
+      while (i < sql.length && sql[i] !== '\n') {
+        i += 1;
+      }
+      continue;
+    }
+
     if (!inSingleQuote && !inDoubleQuote && char === ';') {
       const statement = current.trim();
       if (statement) {
@@ -77,7 +87,7 @@ function splitSqlStatements(sql) {
     statements.push(tail);
   }
 
-  return statements.filter((statement) => statement && !statement.startsWith('--'));
+  return statements.filter(Boolean);
 }
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -103,7 +113,6 @@ function buildConnectionConfig() {
     queueLimit: 0,
     enableKeepAlive: true,
     keepAliveInitialDelay: 10000,
-    multipleStatements: false,
   };
 
   if (config.host && config.host.includes('rds.amazonaws.com')) {
@@ -118,6 +127,100 @@ function buildConnectionConfig() {
   }
 
   return config;
+}
+
+async function runSqlFile(pool, filePath) {
+  const sql = fs.readFileSync(filePath, 'utf8');
+  const statements = splitSqlStatements(sql);
+  const failures = [];
+  let executed = 0;
+  let skipped = 0;
+
+  for (const statement of statements) {
+    try {
+      await pool.query(statement);
+      executed += 1;
+    } catch (error) {
+      const message = (error.message || '').toLowerCase();
+      const isSafeToIgnore =
+        message.includes('already exists') ||
+        message.includes('duplicate') ||
+        message.includes('index exists') ||
+        message.includes('key exists') ||
+        message.includes('table exists');
+
+      if (isSafeToIgnore) {
+        skipped += 1;
+        continue;
+      }
+
+      // One bad statement should not stop the rest of the tables from being created.
+      console.error(`Statement failed, continuing: ${statement.slice(0, 90).replace(/\s+/g, ' ')}...`);
+      console.error(`  -> ${error.message}`);
+      failures.push({ statement, error: error.message });
+    }
+  }
+
+  console.log(`  ${path.basename(filePath)}: ${statements.length} statements, ${executed} executed, ${skipped} skipped, ${failures.length} failed.`);
+  return failures;
+}
+
+async function verifyTables(pool) {
+  const [rows] = await pool.query(
+    'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?',
+    [dbName]
+  );
+  const present = new Set(rows.map((row) => row.name));
+  const missing = EXPECTED_TABLES.filter((table) => !present.has(table));
+  const found = EXPECTED_TABLES.filter((table) => present.has(table));
+  return { missing, present: found };
+}
+
+async function ensureDefaultRoles(pool) {
+  const roles = [
+    ['Admin', 'Administrator role'],
+    ['Editor', 'Editor role'],
+    ['Reporter', 'Reporter role'],
+    ['Author', 'Author role'],
+    ['User', 'Default user role'],
+  ];
+
+  for (const [roleName, description] of roles) {
+    await pool.query(
+      'INSERT IGNORE INTO tbl_roles (role_name, description) VALUES (?, ?)',
+      [roleName, description]
+    );
+  }
+}
+
+async function getRoleId(pool, roleName) {
+  const [rows] = await pool.query('SELECT id FROM tbl_roles WHERE role_name = ? LIMIT 1', [roleName]);
+  return rows[0]?.id || null;
+}
+
+async function seedAdmin(pool) {
+  await ensureDefaultRoles(pool);
+  const roleId = await getRoleId(pool, 'Admin');
+  if (!roleId) {
+    throw new Error('Admin role was not created.');
+  }
+
+  const hashedPassword = await bcrypt.hash(adminPassword, 10);
+  const [existingUsers] = await pool.query('SELECT id FROM tbl_users WHERE email = ? LIMIT 1', [adminEmail]);
+
+  if (existingUsers.length > 0) {
+    await pool.query(
+      'UPDATE tbl_users SET username = ?, password = ?, first_name = ?, last_name = ?, role_id = ?, status = ? WHERE email = ?',
+      [adminUsername, hashedPassword, 'Admin', 'User', roleId, 'active', adminEmail]
+    );
+    console.log(`Updated existing admin user: ${adminEmail}`);
+  } else {
+    await pool.query(
+      'INSERT INTO tbl_users (username, email, password, first_name, last_name, role_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [adminUsername, adminEmail, hashedPassword, 'Admin', 'User', roleId, 'active']
+    );
+    console.log(`Created admin user: ${adminEmail}`);
+  }
 }
 
 async function main() {
@@ -150,13 +253,6 @@ async function main() {
     }
 
     const allFailures = [...schemaFailures, ...supplementalFailures];
-    if (allFailures.length > 0) {
-      console.error(`\n${allFailures.length} statement(s) failed during migration:`);
-      for (const failure of allFailures) {
-        console.error(`  - ${failure.statement.slice(0, 100).replace(/\s+/g, ' ')}...`);
-        console.error(`    -> ${failure.error}`);
-      }
-    }
 
     const { missing, present } = await verifyTables(pool);
     console.log(`\nTable check: ${present.length}/${EXPECTED_TABLES.length} expected tables present.`);
@@ -165,34 +261,13 @@ async function main() {
     }
 
     if (!present.includes('tbl_roles') || !present.includes('tbl_users')) {
-      throw new Error('Core tables (tbl_roles / tbl_users) are missing. Cannot seed admin. Check the errors above.');
+      throw new Error('Core tables (tbl_roles / tbl_users) are missing. Cannot seed admin. See errors above.');
     }
 
-    await ensureDefaultRoles(pool);
-    const roleId = await getRoleId(pool, 'Admin');
-    if (!roleId) {
-      throw new Error('Admin role was not created.');
-    }
-
-    const hashedPassword = await bcrypt.hash(adminPassword, 10);
-    const [existingUsers] = await pool.query('SELECT id FROM tbl_users WHERE email = ? LIMIT 1', [adminEmail]);
-
-    if (existingUsers.length > 0) {
-      await pool.query(
-        'UPDATE tbl_users SET username = ?, password = ?, first_name = ?, last_name = ?, role_id = ?, status = ? WHERE email = ?',
-        [adminUsername, hashedPassword, 'Admin', 'User', roleId, 'active', adminEmail]
-      );
-      console.log(`Updated existing admin user: ${adminEmail}`);
-    } else {
-      await pool.query(
-        'INSERT INTO tbl_users (username, email, password, first_name, last_name, role_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [adminUsername, adminEmail, hashedPassword, 'Admin', 'User', roleId, 'active']
-      );
-      console.log(`Created admin user: ${adminEmail}`);
-    }
+    await seedAdmin(pool);
 
     if (allFailures.length > 0 || missing.length > 0) {
-      console.error('\nMigration finished with errors — see above. Admin user was still seeded.');
+      console.error('\nMigration finished WITH ERRORS — see above. Admin user was still seeded.');
       process.exitCode = 1;
     } else {
       console.log('\nMigration completed successfully. All tables present.');
@@ -202,72 +277,6 @@ async function main() {
   } finally {
     await pool.end();
   }
-}
-
-async function runSqlFile(pool, filePath) {
-  const sql = fs.readFileSync(filePath, 'utf8');
-  const statements = splitSqlStatements(sql);
-  const failures = [];
-
-  for (const statement of statements) {
-    try {
-      await pool.query(statement);
-    } catch (error) {
-      const message = (error.message || '').toLowerCase();
-      const isSafeToIgnore =
-        message.includes('already exists') ||
-        message.includes('duplicate') ||
-        message.includes('index exists') ||
-        message.includes('key exists') ||
-        message.includes('does not exist') ||
-        message.includes('duplicate entry') ||
-        message.includes('table exists');
-
-      if (isSafeToIgnore) {
-        console.log(`Skipped existing object: ${statement.slice(0, 80)}...`);
-        continue;
-      }
-
-      // Don't let one bad statement stop the rest of the tables from being created.
-      console.error(`Statement failed, continuing with the rest: ${statement.slice(0, 80)}...`);
-      console.error(`  -> ${error.message}`);
-      failures.push({ statement, error: error.message });
-    }
-  }
-
-  return failures;
-}
-
-async function verifyTables(pool) {
-  const [rows] = await pool.query(
-    'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?',
-    [dbName]
-  );
-  const present = new Set(rows.map((row) => row.name));
-  const missing = EXPECTED_TABLES.filter((table) => !present.has(table));
-  return { missing, present: EXPECTED_TABLES.filter((table) => present.has(table)) };
-}
-
-async function ensureDefaultRoles(pool) {
-  const roles = [
-    ['Admin', 'Administrator role'],
-    ['Editor', 'Editor role'],
-    ['Reporter', 'Reporter role'],
-    ['Author', 'Author role'],
-    ['User', 'Default user role'],
-  ];
-
-  for (const [roleName, description] of roles) {
-    await pool.query(
-      'INSERT IGNORE INTO tbl_roles (role_name, description) VALUES (?, ?)',
-      [roleName, description]
-    );
-  }
-}
-
-async function getRoleId(pool, roleName) {
-  const [rows] = await pool.query('SELECT id FROM tbl_roles WHERE role_name = ? LIMIT 1', [roleName]);
-  return rows[0]?.id || null;
 }
 
 main().catch((error) => {
