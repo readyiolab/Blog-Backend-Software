@@ -107,6 +107,7 @@ async function main() {
       await runSqlFile(pool, fixMigrationPath);
     }
 
+    await ensureCoreTables(pool);
     await ensureDefaultRoles(pool);
     const roleId = await getRoleId(pool, 'Admin');
     if (!roleId) {
@@ -165,6 +166,49 @@ async function runSqlFile(pool, filePath) {
   }
 }
 
+async function ensureCoreTables(pool) {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS tbl_roles (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      role_name VARCHAR(50) UNIQUE NOT NULL,
+      description TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS tbl_permissions (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      permission_name VARCHAR(100) UNIQUE NOT NULL,
+      description TEXT,
+      module VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS tbl_users (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      username VARCHAR(50) UNIQUE NOT NULL,
+      email VARCHAR(100) UNIQUE NOT NULL,
+      password VARCHAR(255) NOT NULL,
+      first_name VARCHAR(100),
+      last_name VARCHAR(100),
+      phone VARCHAR(15),
+      profile_image VARCHAR(255),
+      bio TEXT,
+      role_id INT NOT NULL,
+      status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
+      last_login DATETIME,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (role_id) REFERENCES tbl_roles(id),
+      INDEX (email),
+      INDEX (username),
+      INDEX (role_id),
+      INDEX (status)
+    )`,
+  ];
+
+  for (const statement of statements) {
+    await pool.query(statement);
+  }
+}
+
 async function ensureDefaultRoles(pool) {
   const roles = [
     ['Admin', 'Administrator role'],
@@ -174,22 +218,11 @@ async function ensureDefaultRoles(pool) {
     ['User', 'Default user role'],
   ];
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      for (const [roleName, description] of roles) {
-        await pool.query(
-          'INSERT IGNORE INTO tbl_roles (role_name, description) VALUES (?, ?)',
-          [roleName, description]
-        );
-      }
-      return;
-    } catch (error) {
-      if (attempt === 3 || !String(error.message).includes('doesn\'t exist')) {
-        throw error;
-      }
-      console.log(`tbl_roles not ready yet, retrying (${attempt}/3)...`);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
+  for (const [roleName, description] of roles) {
+    await pool.query(
+      'INSERT IGNORE INTO tbl_roles (role_name, description) VALUES (?, ?)',
+      [roleName, description]
+    );
   }
 }
 
