@@ -185,7 +185,7 @@ class ArticleService {
 
         if (!validCategory) {
             // Fallback: use any existing category
-            validCategory = await db.select('tbl_categories', 'id', '1=1 LIMIT 1');
+            validCategory = await db.select('tbl_categories', 'id', '1=1');
         }
 
         if (!validCategory) {
