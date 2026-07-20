@@ -51,16 +51,31 @@ class ArticleService {
     }
 
     async getArticleDetails(slug) {
-        const article = await db.queryAll(
-            `SELECT a.*, c.category_name, c.slug as category_slug, 
-               u.username, u.first_name, u.last_name, u.profile_image as author_image,
-               u.bio as author_bio, u.twitter_url, u.facebook_url, u.linkedin_url
-        FROM tbl_articles a
-        JOIN tbl_categories c ON a.category_id = c.id
-        JOIN tbl_users u ON a.author_id = u.id
-        WHERE a.slug = ? AND a.status = 'published'`,
-            [slug]
-        );
+        let article = [];
+        try {
+            article = await db.queryAll(
+                `SELECT a.*, c.category_name, c.slug as category_slug, 
+                   u.username, u.first_name, u.last_name, u.profile_image as author_image,
+                   u.bio as author_bio, u.twitter_url, u.facebook_url, u.linkedin_url
+            FROM tbl_articles a
+            LEFT JOIN tbl_categories c ON a.category_id = c.id
+            LEFT JOIN tbl_users u ON a.author_id = u.id
+            WHERE a.slug = ? AND a.status = 'published'`,
+                [slug]
+            );
+        } catch (err) {
+            console.warn('Primary article details query failed, trying fallback query:', err.message);
+            article = await db.queryAll(
+                `SELECT a.*, c.category_name, c.slug as category_slug, 
+                   u.username, u.first_name, u.last_name, u.profile_image as author_image,
+                   u.bio as author_bio
+            FROM tbl_articles a
+            LEFT JOIN tbl_categories c ON a.category_id = c.id
+            LEFT JOIN tbl_users u ON a.author_id = u.id
+            WHERE a.slug = ? AND a.status = 'published'`,
+                [slug]
+            );
+        }
 
         if (!article || article.length === 0) return null;
 
@@ -87,7 +102,11 @@ class ArticleService {
             console.error('Error fetching gallery for article:', err);
         }
 
-        await db.incrementArticleViews(article[0].id);
+        try {
+            await db.incrementArticleViews(article[0].id);
+        } catch (err) {
+            console.error('Error incrementing article views:', err);
+        }
 
         return {
             ...article[0],

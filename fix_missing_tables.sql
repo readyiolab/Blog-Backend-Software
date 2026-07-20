@@ -96,3 +96,9 @@ CREATE TABLE IF NOT EXISTS tbl_article_analytics (
   INDEX (date),
   UNIQUE KEY unique_article_date (article_id, date)
 );
+
+-- Add optional user social media columns if not present
+ALTER TABLE tbl_users ADD COLUMN twitter_url VARCHAR(255);
+ALTER TABLE tbl_users ADD COLUMN facebook_url VARCHAR(255);
+ALTER TABLE tbl_users ADD COLUMN linkedin_url VARCHAR(255);
+

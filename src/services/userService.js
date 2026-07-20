@@ -117,15 +117,29 @@ class UserService {
     }
 
     async getUserProfile(userId) {
-        const user = await db.queryAll(
-            `SELECT u.id, u.username, u.email, u.first_name, u.last_name, 
-              u.phone, u.profile_image, u.bio, u.twitter_url, u.facebook_url, u.linkedin_url,
-              u.status, u.last_login, u.created_at, r.role_name
-       FROM tbl_users u
-       JOIN tbl_roles r ON u.role_id = r.id
-       WHERE u.id = ?`,
-            [userId]
-        );
+        let user = [];
+        try {
+            user = await db.queryAll(
+                `SELECT u.id, u.username, u.email, u.first_name, u.last_name, 
+                  u.phone, u.profile_image, u.bio, u.twitter_url, u.facebook_url, u.linkedin_url,
+                  u.status, u.last_login, u.created_at, r.role_name
+           FROM tbl_users u
+           JOIN tbl_roles r ON u.role_id = r.id
+           WHERE u.id = ?`,
+                [userId]
+            );
+        } catch (err) {
+            console.warn('Primary user profile query failed, trying fallback query:', err.message);
+            user = await db.queryAll(
+                `SELECT u.id, u.username, u.email, u.first_name, u.last_name, 
+                  u.phone, u.profile_image, u.bio,
+                  u.status, u.last_login, u.created_at, r.role_name
+           FROM tbl_users u
+           JOIN tbl_roles r ON u.role_id = r.id
+           WHERE u.id = ?`,
+                [userId]
+            );
+        }
 
         if (!user || user.length === 0) return null;
         const permissions = await rbacModel.getUserPermissions(userId);
