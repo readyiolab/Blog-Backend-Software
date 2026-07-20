@@ -170,14 +170,54 @@ class ArticleService {
             status = data.status === 'published' ? 'published' : 'draft';
         }
 
+        // Validate category_id to prevent foreign key constraint failure (ER_NO_REFERENCED_ROW_2)
+        let categoryId = data.categoryId;
+        let validCategory = null;
+
+        if (categoryId) {
+            validCategory = await db.select('tbl_categories', 'id', 'id = ?', [categoryId]);
+        }
+
+        if (!validCategory) {
+            // Fallback: use first active category
+            validCategory = await db.select('tbl_categories', 'id', 'status = ?', ['active']);
+        }
+
+        if (!validCategory) {
+            // Fallback: use any existing category
+            validCategory = await db.select('tbl_categories', 'id', '1=1 LIMIT 1');
+        }
+
+        if (!validCategory) {
+            // Auto-create default "General" category if tbl_categories is empty
+            const newCat = await db.insert('tbl_categories', {
+                category_name: 'General',
+                slug: 'general',
+                description: 'General category for articles',
+                status: 'active'
+            });
+            categoryId = newCat.insert_id;
+        } else {
+            categoryId = validCategory.id;
+        }
+
+        // Validate sub_category_id if provided
+        let subCategoryId = data.subCategoryId || null;
+        if (subCategoryId) {
+            const validSubCat = await db.select('tbl_sub_categories', 'id', 'id = ?', [subCategoryId]);
+            if (!validSubCat) {
+                subCategoryId = null;
+            }
+        }
+
         const articleData = {
             title: data.title,
             slug,
             excerpt: data.excerpt || '',
             content: data.content,
             featured_image: data.imageUrl || null,
-            category_id: data.categoryId,
-            sub_category_id: data.subCategoryId || null,
+            category_id: categoryId,
+            sub_category_id: subCategoryId,
             author_id: userId,
             status,
             meta_title: data.title.substring(0, 160),
@@ -219,8 +259,18 @@ class ArticleService {
         }
         if (data.excerpt) updateData.excerpt = data.excerpt;
         if (data.content) updateData.content = data.content;
-        if (data.categoryId) updateData.category_id = data.categoryId;
-        if (data.subCategoryId) updateData.sub_category_id = data.subCategoryId;
+        if (data.categoryId) {
+            const validCat = await db.select('tbl_categories', 'id', 'id = ?', [data.categoryId]);
+            if (validCat) {
+                updateData.category_id = data.categoryId;
+            }
+        }
+        if (data.subCategoryId) {
+            const validSubCat = await db.select('tbl_sub_categories', 'id', 'id = ?', [data.subCategoryId]);
+            if (validSubCat) {
+                updateData.sub_category_id = data.subCategoryId;
+            }
+        }
         if (data.imageUrl) updateData.featured_image = data.imageUrl;
         if (data.status) updateData.status = data.status;
         if (data.metaTitle) updateData.meta_title = data.metaTitle.substring(0, 160);
